@@ -75,7 +75,7 @@ jobs:
   plan:
     permissions:
       "contents": "read"
-    runs-on: "depot-ubuntu-24.04-4"
+    runs-on: ubuntu-latest
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
       tag: ${{ (inputs.tag != 'dry-run' && inputs.tag) || '' }}
@@ -134,10 +134,11 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
 
   custom-build-docker:
+    # ruff-md: not published by this fork.
+    if: false
     needs:
       - plan
       - release-gate
-    if: ${{ always() && needs.plan.result == 'success' && (needs.release-gate.result == 'success' || needs.release-gate.result == 'skipped') && (needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload' || inputs.tag == 'dry-run') }}
     uses: $/.github/workflows/build-docker.yml
     with:
       plan: ${{ needs.plan.outputs.val }}
@@ -149,9 +150,10 @@ jobs:
       "packages": "write"
 
   custom-build-wasm:
+    # ruff-md: not published by this fork.
+    if: false
     needs:
       - plan
-    if: ${{ needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload' || inputs.tag == 'dry-run' }}
     uses: $/.github/workflows/build-wasm.yml
     with:
       plan: ${{ needs.plan.outputs.val }}
@@ -160,13 +162,14 @@ jobs:
   # The custom binary jobs produce checksum sidecars outside cargo-dist.
   # Include them in a local manifest before generating the installers.
   generate-checksum-manifest:
+    # ruff-md: not published by this fork.
+    if: false
     needs:
       - plan
       - custom-build-binaries
-    if: ${{ needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload' || inputs.tag == 'dry-run' }}
     permissions:
       "contents": "read"
-    runs-on: "depot-ubuntu-24.04-4"
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -220,7 +223,7 @@ jobs:
       - generate-checksum-manifest
     permissions:
       "contents": "read"
-    runs-on: "depot-ubuntu-24.04-4"
+    runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
@@ -282,7 +285,7 @@ jobs:
       "contents": "read"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    runs-on: "depot-ubuntu-24.04-4"
+    runs-on: ubuntu-latest
     outputs:
       val: ${{ steps.host.outputs.manifest }}
     steps:
@@ -325,11 +328,12 @@ jobs:
           path: dist-manifest.json
 
   custom-publish-pypi:
+    # ruff-md: force-run; upstream's condition silently skips here.
+    if: ${{ always() && needs.host.result == 'success' }}
     needs:
       - plan
       - host
       - release-gate
-    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
     uses: $/.github/workflows/publish-pypi.yml
     with:
       plan: ${{ needs.plan.outputs.val }}
@@ -340,11 +344,12 @@ jobs:
       "packages": "write"
 
   custom-publish-wasm:
+    # ruff-md: not published by this fork.
+    if: false
     needs:
       - plan
       - host
       - release-gate
-    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
     uses: $/.github/workflows/publish-wasm.yml
     with:
       plan: ${{ needs.plan.outputs.val }}
@@ -356,13 +361,14 @@ jobs:
       "packages": "write"
 
   custom-publish-crates:
+    # ruff-md: not published by this fork.
+    if: false
     needs:
       - plan
       - host
       - release-gate
       - custom-publish-pypi # DIRTY: see #16989
       - custom-publish-wasm # DIRTY: see #16989
-    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
     uses: $/.github/workflows/publish-crates.yml
     with:
       plan: ${{ needs.plan.outputs.val }}
@@ -374,6 +380,8 @@ jobs:
 
   # Create a GitHub Release while uploading all files to it
   announce:
+    # ruff-md: not published by this fork.
+    if: false
     needs:
       - plan
       - host
@@ -385,8 +393,7 @@ jobs:
     # "host" however must run to completion, no skipping allowed!
     # `custom-publish-crates` is intentionally not a dependency because a crates.io outage should
     # not block the rest of the release.
-    if: ${{ always() && needs.host.result == 'success' && needs.release-gate.result == 'success' && (needs.custom-publish-pypi.result == 'skipped' || needs.custom-publish-pypi.result == 'success') && (needs.custom-publish-wasm.result == 'skipped' || needs.custom-publish-wasm.result == 'success') }}
-    runs-on: "depot-ubuntu-24.04-4"
+    runs-on: ubuntu-latest
     environment:
       name: release
     permissions:
@@ -444,6 +451,8 @@ jobs:
           gh release create "${NEEDS_PLAN_OUTPUTS_TAG}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
   custom-notify-dependents:
+    # ruff-md: not published by this fork.
+    if: false
     needs:
       - plan
       - announce
@@ -453,6 +462,8 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
 
   custom-publish-docs:
+    # ruff-md: not published by this fork.
+    if: false
     needs:
       - plan
       - announce
@@ -464,6 +475,8 @@ jobs:
       "contents": "read"
 
   custom-publish-playground:
+    # ruff-md: not published by this fork.
+    if: false
     needs:
       - plan
       - announce
@@ -473,6 +486,8 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
 
   custom-publish-versions:
+    # ruff-md: not published by this fork.
+    if: false
     needs:
       - plan
       - announce
@@ -482,6 +497,8 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
 
   custom-publish-mirror:
+    # ruff-md: not published by this fork.
+    if: false
     needs:
       - plan
       - announce
