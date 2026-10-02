@@ -365,7 +365,7 @@ jobs:
 
   cargo-publish-dry-run:
     name: "cargo publish dry-run"
-    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'depot-ubuntu-22.04-8' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     needs: determine_changes
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-test') && (needs.determine_changes.outputs.code == 'true' || github.ref == 'refs/heads/main') }}
     timeout-minutes: 20
@@ -381,7 +381,7 @@ jobs:
 
   cargo-test-linux:
     name: "cargo test (linux)"
-    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     needs: determine_changes
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-test') && (needs.determine_changes.outputs.code == 'true' || github.ref == 'refs/heads/main') }}
     timeout-minutes: 20
@@ -445,7 +445,7 @@ jobs:
   cargo-test-linux-release:
     name: "cargo test (linux, release)"
     # release builds timeout on GitHub runners, so this job is just skipped on forks in the `if` check
-    runs-on: depot-ubuntu-22.04-16
+    runs-on: ubuntu-22.04
     needs: determine_changes
     if: |
       github.repository == 'astral-sh/ruff' &&
@@ -559,7 +559,7 @@ jobs:
 
   cargo-build-msrv:
     name: "cargo build (msrv)"
-    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     needs: determine_changes
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-test') && (needs.determine_changes.outputs.code == 'true' || github.ref == 'refs/heads/main') }}
     timeout-minutes: 20
@@ -697,7 +697,7 @@ jobs:
 
   ecosystem:
     name: "ecosystem"
-    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'depot-ubuntu-24.04-8' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     needs: determine_changes
     # Only runs on pull requests, since that is the only we way we can find the base version for comparison.
     # Ecosystem check needs linter and/or formatter changes.
@@ -822,7 +822,7 @@ jobs:
 
   fuzz-ty:
     name: "Fuzz for new ty panics"
-    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     needs:
       - determine_changes
     # Only runs on pull requests, since that is the only we way we can find the base version for comparison.
@@ -922,7 +922,7 @@ jobs:
 
   ty-completion-evaluation:
     name: "ty completion evaluation"
-    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     needs: determine_changes
     if: ${{ needs.determine_changes.outputs.ty == 'true' || github.ref == 'refs/heads/main' }}
     env:
@@ -982,7 +982,7 @@ jobs:
 
   pgo:
     name: "PGO"
-    runs-on: depot-ubuntu-24.04-8
+    runs-on: ubuntu-24.04
     needs: determine_changes
     if: ${{ needs.determine_changes.outputs.release == 'true' && !contains(github.event.pull_request.labels.*.name, 'no-build') }}
     timeout-minutes: 20
@@ -1004,7 +1004,7 @@ jobs:
 
   prek:
     name: "prek"
-    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     needs: determine_changes
     timeout-minutes: 10
     steps:
@@ -1190,7 +1190,7 @@ jobs:
 
   benchmarks-instrumented-ruff:
     name: "benchmarks instrumented (ruff)"
-    runs-on: depot-ubuntu-24.04
+    runs-on: ubuntu-24.04
     needs: determine_changes
     if: |
       github.repository == 'astral-sh/ruff' &&
@@ -1245,7 +1245,7 @@ jobs:
 
   benchmarks-instrumented-ty-build:
     name: "benchmarks instrumented ty (build)"
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ubuntu-24.04
     needs: determine_changes
     if: |
       github.repository == 'astral-sh/ruff' &&
@@ -1288,7 +1288,7 @@ jobs:
 
   benchmarks-instrumented-ty-run:
     name: "benchmarks instrumented ty (${{ matrix.mode }}: ${{ matrix.name }})"
-    runs-on: depot-ubuntu-24.04
+    runs-on: ubuntu-24.04
     needs: benchmarks-instrumented-ty-build
     timeout-minutes: 20
     permissions:
@@ -1376,7 +1376,7 @@ jobs:
     name: "benchmarks walltime (build)"
     # We only run this job if `github.repository == 'astral-sh/ruff'`,
     # so hardcoding depot here is fine
-    runs-on: depot-ubuntu-22.04-arm-4
+    runs-on: ubuntu-22.04-arm
     needs: determine_changes
     if: |
       github.repository == 'astral-sh/ruff' &&

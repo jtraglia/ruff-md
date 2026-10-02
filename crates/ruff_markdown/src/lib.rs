@@ -61,6 +61,65 @@ fn is_closing_code_fence(line: &str, opening_fence: &str) -> bool {
     fence_len >= opening_fence.len() && line[fence_len..].chars().all(|ch| matches!(ch, ' ' | '\t'))
 }
 
+/// Extract Python source from fenced ` ```python ` code blocks in the markdown,
+/// preserving line numbers so that diagnostics in the extracted source map 1:1
+/// to lines in the original markdown.
+///
+/// Lines inside recognized Python fenced code blocks are emitted verbatim
+/// (without their original line terminator; a `\n` is appended). All other
+/// lines (including fence delimiters themselves and non-Python code blocks)
+/// become empty lines. The returned string has the same number of lines as
+/// the input.
+///
+/// Recognized languages: `python`, `py`, `python3`, `py3` (case-insensitive).
+/// `off`/`on` directives that disable formatting (`<!-- fmt: off -->`) also
+/// disable lint extraction for the affected blocks.
+pub fn extract_python(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let mut state = MarkdownState::On;
+    let mut lines = source.universal_newlines().peekable();
+    while let Some(line) = lines.next() {
+        if let Some(capture) = OFF_ON_DIRECTIVES.captures(&line) {
+            let (_, [action]) = capture.extract();
+            state = match action {
+                "off" => MarkdownState::Off,
+                "on" => MarkdownState::On,
+                _ => state,
+            };
+            output.push('\n');
+            continue;
+        }
+
+        if let Some(opening_capture) = MARKDOWN_CODE_FENCE.captures(&line) {
+            let (_, [_indent, opening_fence, language, _info]) = opening_capture.extract();
+            // Opening fence itself becomes a blank line.
+            output.push('\n');
+            let language_lc = language.to_ascii_lowercase();
+            let is_python = state == MarkdownState::On
+                && matches!(language_lc.as_str(), "python" | "py" | "python3" | "py3");
+            for code_line in lines.by_ref() {
+                if let Some(closing_capture) = MARKDOWN_CODE_FENCE.captures(&code_line) {
+                    let (_, [_, closing_fence, _, _]) = closing_capture.extract();
+                    if closing_fence == opening_fence {
+                        // Closing fence becomes a blank line.
+                        output.push('\n');
+                        break;
+                    }
+                }
+                if is_python {
+                    output.push_str(&code_line);
+                    output.push('\n');
+                } else {
+                    output.push('\n');
+                }
+            }
+        } else {
+            output.push('\n');
+        }
+    }
+    output
+}
+
 pub fn format_code_blocks(
     source: &str,
     path: Option<&Path>,
@@ -220,7 +279,57 @@ mod tests {
     use ruff_linter::settings::types::{ExtensionMapping, ExtensionPair, Language};
     use ruff_workspace::FormatterSettings;
 
-    use crate::{MarkdownResult, format_code_blocks};
+    use crate::{MarkdownResult, extract_python, format_code_blocks};
+
+    #[test]
+    fn extract_python_basic() {
+        let code = "Intro line.\n\n```python\nx = 1\n```\n\nMore text.\n";
+        // line 1: "Intro line." -> ""
+        // line 2: ""             -> ""
+        // line 3: "```python"    -> ""
+        // line 4: "x = 1"        -> "x = 1"
+        // line 5: "```"          -> ""
+        // line 6: ""             -> ""
+        // line 7: "More text."   -> ""
+        assert_eq!(extract_python(code), "\n\n\nx = 1\n\n\n\n");
+    }
+
+    #[test]
+    fn extract_python_multiple_blocks() {
+        let code =
+            "# Heading\n\n```python\na = 1\n```\n\nProse.\n\n```py\nb = 2\nc = 3\n```\nEnd.\n";
+        // 12 input lines (no trailing newline counted as a separate line)
+        assert_eq!(
+            extract_python(code),
+            "\n\n\na = 1\n\n\n\n\n\nb = 2\nc = 3\n\n\n"
+        );
+    }
+
+    #[test]
+    fn extract_python_non_python_blocks_ignored() {
+        let code = "```rust\nfn main() {}\n```\n```python\nz = 9\n```\n";
+        // line 1: "```rust"      -> ""
+        // line 2: "fn main() {}" -> "" (not python)
+        // line 3: "```"          -> ""
+        // line 4: "```python"    -> ""
+        // line 5: "z = 9"        -> "z = 9"
+        // line 6: "```"          -> ""
+        assert_eq!(extract_python(code), "\n\n\n\nz = 9\n\n");
+    }
+
+    #[test]
+    fn extract_python_no_blocks() {
+        let code = "Just prose.\nMore prose.\n";
+        assert_eq!(extract_python(code), "\n\n");
+    }
+
+    #[test]
+    fn extract_python_respects_off_directive() {
+        let code =
+            "<!-- fmt: off -->\n```python\nx = 1\n```\n<!-- fmt: on -->\n```python\ny = 2\n```\n";
+        // Only the second block is extracted
+        assert_eq!(extract_python(code), "\n\n\n\n\n\ny = 2\n\n");
+    }
 
     impl std::fmt::Display for MarkdownResult {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

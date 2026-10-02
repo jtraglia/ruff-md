@@ -240,7 +240,7 @@ jobs:
   update-snapshots:
     name: Update snapshots
     # Use a beefier depot runner if possible, because Rust compile times are really slow on GitHub runners
-    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    runs-on: ${{ github.repository == 'astral-sh/ruff' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     timeout-minutes: 20
     needs: [sync, docstrings-windows, docstrings-macos]
 
