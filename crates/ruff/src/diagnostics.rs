@@ -20,7 +20,7 @@ use ruff_linter::source_kind::{SourceError, SourceKind, SourceKindDiff};
 use ruff_linter::toml::{TomlFixerResult, lint_fix_toml, lint_toml};
 use ruff_linter::{IOError, Violation, fs};
 use ruff_notebook::{NotebookError, NotebookIndex};
-use ruff_python_ast::{SourceType, TomlSourceType};
+use ruff_python_ast::{PySourceType, SourceType, TomlSourceType};
 use ruff_source_file::SourceFileBuilder;
 use ruff_text_size::TextRange;
 use ruff_workspace::Settings;
@@ -268,20 +268,52 @@ pub(crate) fn lint_path(
                 notebook_indexes: FxHashMap::default(),
             });
         }
-        SourceType::Toml(_) | SourceType::Markdown => return Ok(Diagnostics::default()),
+        SourceType::Toml(_) => return Ok(Diagnostics::default()),
+        SourceType::Markdown => PySourceType::Python,
         SourceType::Python(source_type) => source_type,
     };
+    let is_markdown = matches!(
+        settings.extension.get_source_type(path),
+        SourceType::Markdown
+    );
 
     // Extract the sources from the file.
-    let source_kind = match SourceKind::from_path(path, SourceType::Python(source_type)) {
-        Ok(Some(source_kind)) => match source_kind {
-            SourceKind::Markdown(_) => return Ok(Diagnostics::default()), // skip linting markdown
-            _ => source_kind,
-        },
-        Ok(None) => return Ok(Diagnostics::default()),
-        Err(err) => {
-            return Ok(Diagnostics::from_source_error(&err, Some(path), settings));
+    let source_kind = if is_markdown {
+        // For markdown, read the file and extract Python code blocks while
+        // preserving line numbers, so diagnostics map 1:1 to markdown lines.
+        let contents = match std::fs::read_to_string(path).map_err(SourceError::from) {
+            Ok(contents) => contents,
+            Err(err) => {
+                return Ok(Diagnostics::from_source_error(&err, Some(path), settings));
+            }
+        };
+        let extracted = ruff_markdown::extract_python(&contents);
+        if extracted.trim().is_empty() {
+            return Ok(Diagnostics::default());
         }
+        SourceKind::Python {
+            code: extracted,
+            is_stub: false,
+        }
+    } else {
+        match SourceKind::from_path(path, SourceType::Python(source_type)) {
+            Ok(Some(source_kind)) => match source_kind {
+                SourceKind::Markdown(_) => return Ok(Diagnostics::default()), // unreachable in practice
+                _ => source_kind,
+            },
+            Ok(None) => return Ok(Diagnostics::default()),
+            Err(err) => {
+                return Ok(Diagnostics::from_source_error(&err, Some(path), settings));
+            }
+        }
+    };
+
+    // Auto-fix cannot be written back into markdown (the extraction is one-way),
+    // so demote any --fix/--fix-only request to a no-apply diagnostic-only pass.
+    let fix_mode = if is_markdown {
+        flags::FixMode::Generate
+    } else {
+        fix_mode
     };
 
     // Lint the file.
@@ -453,8 +485,38 @@ pub(crate) fn lint_stdin(
             });
         }
 
-        SourceType::Toml(_) | SourceType::Markdown => return Ok(Diagnostics::default()),
+        SourceType::Toml(_) => return Ok(Diagnostics::default()),
+        SourceType::Markdown => (
+            SourceType::Python(PySourceType::Python),
+            PySourceType::Python,
+        ),
         source_type @ SourceType::Python(py_source_type) => (source_type, py_source_type),
+    };
+    let is_markdown = path
+        .map(|p| {
+            matches!(
+                settings.linter.extension.get_source_type(p),
+                SourceType::Markdown
+            )
+        })
+        .unwrap_or(false);
+
+    // For markdown stdin, extract Python from code blocks first (line-preserving).
+    let contents = if is_markdown {
+        let extracted = ruff_markdown::extract_python(&contents);
+        if extracted.trim().is_empty() {
+            return Ok(Diagnostics::default());
+        }
+        extracted
+    } else {
+        contents
+    };
+
+    // Auto-fix cannot be written back into markdown.
+    let fix_mode = if is_markdown {
+        flags::FixMode::Generate
+    } else {
+        fix_mode
     };
 
     // Extract the sources from the file.

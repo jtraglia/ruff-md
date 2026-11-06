@@ -1,0 +1,209 @@
+# Publish a ruff-md release whenever upstream astral-sh/ruff cuts a new one.
+#
+# This replaces a rebase-based job that could not work. Replaying the fork's
+# commits onto each new upstream tag conflicted on ordinary upstream churn: a
+# 3-way merge stops even when both sides only *add* code near each other, and
+# every release bumps `version` in pyproject.toml next to the fork's `name`
+# edit.
+#
+# So nothing is merged here. Each release is rebuilt from scratch:
+#
+#   checkout upstream tag -> fork/apply.sh -> build + smoke test -> commit
+#   -> tag -> force-push -> dispatch release.yml
+#
+# The result is always exactly one commit on top of the upstream release, and
+# fork/fork.patch is the source of truth rather than the branch history.
+#
+# Nothing is tagged or published unless the build and smoke test pass, so a
+# failed run leaves the previous release untouched. When one fails, see the step
+# summary for fork/apply.sh's output, then re-base the patch onto the new tag:
+#
+#   git checkout --detach refs/upstream-tags/<tag>
+#   fork/apply.sh                     # leaves *.rej for any failed hunk
+#   # fix the rejected hunks, then:
+#   fork/regen.sh refs/upstream-tags/<tag>
+#
+# NOTE: this file is a copy. The canonical version lives at
+# fork/workflows/auto-release.yml and is copied here by
+# fork/apply.sh on every release, so edit that one.
+name: Auto-release on new upstream releases
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Upstream tag to release (default: newest)"
+        required: false
+        type: string
+      dry_run:
+        description: "Build and verify, but do not tag or publish"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  "contents": "write"
+  "actions": "write"
+
+env:
+  RELEASE_BRANCH: lint-markdown
+  UPSTREAM_REPO: https://github.com/astral-sh/ruff.git
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ env.RELEASE_BRANCH }}
+          fetch-depth: 0
+          fetch-tags: true
+          # A PAT with `workflow` scope is required: the release commit contains
+          # .github/workflows/*.yml, which the default GITHUB_TOKEN may not
+          # push. checkout persists this token into .git/config, so the later
+          # `git push` calls pick it up automatically.
+          token: ${{ secrets.RELEASE_PAT }}
+          persist-credentials: true
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream tags into a private namespace
+        run: |
+          git remote add upstream "$UPSTREAM_REPO"
+          # Upstream and origin share tag names but point at different commits
+          # (origin's tag has the fork's changes on top), so upstream tags are
+          # mirrored into refs/upstream-tags/* to keep them apart.
+          git fetch --no-tags upstream "+refs/tags/*:refs/upstream-tags/*"
+
+      - name: Decide what to release
+        id: plan
+        env:
+          REQUESTED: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+          if [ -n "$REQUESTED" ]; then
+            TARGET="$REQUESTED"
+          else
+            TARGET=$(
+              git for-each-ref --format='%(refname:strip=2)' 'refs/upstream-tags/' \
+                | grep -E "$semver" | sort -V | tail -n1
+            )
+          fi
+
+          if ! git rev-parse -q --verify "refs/upstream-tags/$TARGET" >/dev/null; then
+            echo "::error::Upstream tag $TARGET does not exist."
+            exit 1
+          fi
+
+          echo "Newest upstream release: $TARGET"
+
+          # Only the newest upstream release is published. If the fork has
+          # fallen several versions behind, intermediate versions are skipped
+          # rather than published in a burst.
+          if git rev-parse -q --verify "refs/tags/$TARGET" >/dev/null; then
+            echo "$TARGET is already released; nothing to do."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        if: steps.plan.outputs.proceed == 'true'
+        with:
+          # The cache key must not depend on the checked-out ref, which changes
+          # every release.
+          key: auto-release
+
+      - name: Apply the fork to the upstream release
+        if: steps.plan.outputs.proceed == 'true'
+        env:
+          TARGET: ${{ steps.plan.outputs.target }}
+        run: |
+          set -euo pipefail
+
+          # Checking out the upstream tag deletes fork/, so stash it first. It
+          # puts itself back as part of the overlay copy in apply.sh.
+          cp -R fork "$RUNNER_TEMP/fork"
+
+          git checkout --quiet --detach "refs/upstream-tags/$TARGET"
+          git clean -qfd -e target
+          cp -R "$RUNNER_TEMP/fork" fork
+
+          fork/apply.sh 2>&1 | tee "$RUNNER_TEMP/apply.log"
+
+          {
+            echo "## ruff-md $TARGET"
+            echo '```'
+            cat "$RUNNER_TEMP/apply.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify
+        if: steps.plan.outputs.proceed == 'true'
+        run: |
+          set -euo pipefail
+
+          # A rejected hunk is not by itself a failure — upstream may have
+          # implemented that change already. What matters is whether the result
+          # builds and still lints Python inside markdown, so that is the gate.
+          cargo build --bin ruff
+          cargo test -p ruff_markdown
+
+          cat > "$RUNNER_TEMP/smoke.md" <<'EOF'
+          # Title
+
+          ```python
+          import os
+          ```
+          EOF
+          out=$(./target/debug/ruff check --isolated --no-cache --select F401 \
+            --output-format concise "$RUNNER_TEMP/smoke.md" || true)
+          echo "$out"
+          if ! grep -q 'smoke.md:4:8: F401' <<<"$out"; then
+            echo "::error::Smoke test failed: expected F401 on line 4, inside the fenced block."
+            exit 1
+          fi
+          echo "Smoke test passed: markdown linting maps to the right line."
+
+      - name: Tag, force-push, and publish
+        if: steps.plan.outputs.proceed == 'true' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          TARGET: ${{ steps.plan.outputs.target }}
+        run: |
+          set -euo pipefail
+
+          # Build artifacts and reject files must not end up in the commit.
+          rm -f fork-rejects.txt
+          find . -name '*.rej' -not -path './target/*' -delete
+
+          git add -A
+          git commit --quiet -m "ruff-md $TARGET" -m \
+            "Upstream $TARGET with fork/fork.patch applied. Built by auto-release.yml."
+
+          git tag "$TARGET"
+          # The branch is a pointer at the newest release, nothing more: exactly
+          # one commit on top of the upstream tag. Old commits stay reachable
+          # through their tags, so the force-push loses nothing.
+          git branch --force "$RELEASE_BRANCH" HEAD
+          git push origin "refs/tags/$TARGET"
+          git push --force origin "$RELEASE_BRANCH"
+
+          # release.yml at the new tag is the fork's copy, which publishes
+          # ruff-md to PyPI. Dispatched with the PAT so it reliably triggers.
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" \
+            --ref "$TARGET" -f tag="$TARGET"
+          echo "Dispatched release.yml for $TARGET" >> "$GITHUB_STEP_SUMMARY"
