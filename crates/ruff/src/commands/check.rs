@@ -51,6 +51,7 @@ pub(crate) fn check(
                 SourceType::from(path),
                 SourceType::Python(_)
                     | SourceType::Toml(TomlSourceType::Pyproject | TomlSourceType::Ruff)
+                    | SourceType::Markdown
             )
         } else {
             true
